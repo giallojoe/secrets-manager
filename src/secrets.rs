@@ -55,6 +55,7 @@ impl SecretManager {
             };
 
         let contents = serde_json::to_string(&info)?;
+        tokio::fs::create_dir_all(&dest).await?;
         tokio::fs::write(dest, contents).await?;
         let mut res = Self {
             client,
