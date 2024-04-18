@@ -1,8 +1,8 @@
 [package]
 name = "secrets-manager"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
-repository = "https://github.com/giallojoe/secrets-manager.git"
+repository = "https://github.com/giallojoe/secrets-manager"
 authors = ["Gioacchino Giallombardo <giallombardogioacchino@gmail.com>"]
 license = "MIT"
 description = "A tool to manage secrets and configurations and working with aws secrets-manager, inspired by https://github.com/ThePrimeagen/projector"
