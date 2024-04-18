@@ -82,6 +82,11 @@ where
         }
     }
 
+    pub fn add_from_str(&mut self, source: &str, cwd: PathBuf) -> Result<(), serde_json::Error> {
+        self.data.insert(cwd, serde_json::from_str(source)?);
+        Ok(())
+    }
+
     pub fn from_str(source: &str, cwd: PathBuf) -> Result<Self, serde_json::Error> {
         let data = serde_json::from_str::<HashMap<PathBuf, HashMap<String, T>>>(source)?;
         Ok(Self { cwd, data })

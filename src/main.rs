@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
-use secrets_manager::commands::{handle_config, handle_secrets, Config, Secret};
+use secrets_manager::commands::{
+    handle_config, handle_secrets, handle_store, Config, Secret, Store,
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -11,6 +13,7 @@ struct Cli {
 enum Commands {
     Config(Config),
     Secret(Secret),
+    Store(Store),
 }
 
 #[tokio::main]
@@ -22,6 +25,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Secret(cli) => {
             handle_secrets(cli).await?;
+        }
+        Commands::Store(cli) => {
+            handle_store(cli).await?;
         }
     }
     Ok(())

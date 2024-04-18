@@ -1,11 +1,13 @@
 mod config;
 mod secrets;
+mod store;
 
 use std::path::{Path, PathBuf};
 
 pub use config::*;
 use platform_dirs::AppDirs;
 pub use secrets::*;
+pub use store::*;
 
 pub fn get_config_path(
     config: Option<PathBuf>,
