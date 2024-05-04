@@ -1,31 +1,44 @@
 use std::{
     collections::HashMap,
-    fs::File,
     path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+use crate::KeyRef;
+
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Configuration<T> {
-    cwd: PathBuf,
+    #[serde(flatten)]
     data: HashMap<PathBuf, HashMap<String, T>>,
 }
 
 impl<T> Configuration<T> {
-    pub fn new(cwd: PathBuf) -> Self {
+    pub fn new() -> Self {
         Self {
-            cwd,
             data: HashMap::new(),
         }
     }
 
-    pub fn path(&self) -> &Path {
-        &self.cwd
+    pub fn keys<'a>(&'a self, path: impl AsRef<Path>) -> impl Iterator<Item = KeyRef> + 'a {
+        let paths: Vec<_> = self
+            .data
+            .keys()
+            .filter(|v| v.starts_with(path.as_ref()))
+            .collect();
+        paths
+            .into_iter()
+            .filter_map(|path| self.data.get(path).map(|v| (path, v)))
+            .flat_map(|(path, v)| {
+                v.keys().map(|k| KeyRef {
+                    key: k.clone(),
+                    path: path.to_path_buf(),
+                })
+            })
     }
 
-    pub fn get_values_for_cwd(&self) -> HashMap<&String, &T> {
-        let paths: Vec<_> = self.cwd.ancestors().collect();
+    pub fn get_all(&self, path: impl AsRef<Path>) -> HashMap<&String, &T> {
+        let paths: Vec<_> = path.as_ref().ancestors().collect();
         paths
             .into_iter()
             .rev()
@@ -39,71 +52,29 @@ impl<T> Configuration<T> {
             })
     }
 
-    pub fn set_value(&mut self, key: impl Into<String>, value: impl Into<T>) -> Option<T> {
+    pub fn set(&mut self, key: KeyRef, value: impl Into<T>) -> Option<T> {
         self.data
-            .entry(self.cwd.clone())
+            .entry(key.path)
             .or_default()
-            .insert(key.into(), value.into())
+            .insert(key.key, value.into())
     }
 
-    pub fn get_value_at(&self, cwd: impl AsRef<Path>, key: &str) -> Option<&T> {
-        cwd.as_ref()
+    pub fn get(&self, key_ref: &KeyRef) -> Option<&T> {
+        key_ref
+            .path
             .ancestors()
-            .filter_map(|path| self.data.get(path).and_then(|map| map.get(key)))
+            .filter_map(|path| self.data.get(path).and_then(|map| map.get(&key_ref.key)))
             .next()
     }
 
-    pub fn get_value(&self, key: &str) -> Option<&T> {
-        self.get_value_at(&self.cwd, key)
+    pub fn remove(&mut self, key: &KeyRef) -> Option<T> {
+        self.data
+            .get_mut(&key.path)
+            .and_then(|kv| kv.remove(&key.key))
     }
 
-    pub fn remove_value(&mut self, key: &str) -> Option<T> {
-        self.data.get_mut(&self.cwd).and_then(|kv| kv.remove(key))
-    }
-
-    pub fn with_path(self, cwd: impl Into<PathBuf>) -> Self {
-        Self {
-            cwd: cwd.into(),
-            data: self.data,
-        }
-    }
-}
-impl<T> Configuration<T>
-where
-    for<'a> T: Deserialize<'a> + Serialize,
-{
-    pub fn from_path(source: impl AsRef<Path>, cwd: PathBuf) -> Result<Self, serde_json::Error> {
-        let reader = File::open(source).ok();
-        if let Some(reader) = reader {
-            let data: HashMap<PathBuf, HashMap<String, T>> = serde_json::from_reader(reader)?;
-            Ok(Self { cwd, data })
-        } else {
-            Ok(Self::new(cwd))
-        }
-    }
-
-    pub fn add_from_str(&mut self, source: &str, cwd: PathBuf) -> Result<(), serde_json::Error> {
-        self.data.insert(cwd, serde_json::from_str(source)?);
-        Ok(())
-    }
-
-    pub fn from_str(source: &str, cwd: PathBuf) -> Result<Self, serde_json::Error> {
-        let data = serde_json::from_str::<HashMap<PathBuf, HashMap<String, T>>>(source)?;
-        Ok(Self { cwd, data })
-    }
-
-    pub fn write(&self, dest: &mut String) -> Result<(), serde_json::Error> {
-        *dest = serde_json::to_string_pretty(&self.data)?;
-        Ok(())
-    }
-
-    pub fn save(&self, dest: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(p) = dest.as_ref().parent() {
-            std::fs::create_dir_all(p)?;
-        }
-        let contents = serde_json::to_string_pretty(&self.data)?;
-        std::fs::write(dest, contents)?;
-        Ok(())
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 }
 
@@ -111,7 +82,7 @@ impl<T> Configuration<T>
 where
     T: Default + std::fmt::Display,
 {
-    pub fn print_tree(&self) -> String {
+    pub fn display(&self) -> String {
         let iter = self.data.keys().map(|key| key.iter());
         let mut tree = ArenaTree::default();
         for mut paths in iter {
@@ -294,7 +265,7 @@ mod tests {
     #[test]
     fn add_value() {
         let mut config = get_config("/foo/bar");
-        config.set_value("uri", "foo");
+        config.set("uri", "foo");
         let result = config.get_value("uri").unwrap();
         assert_eq!(result, "foo");
     }

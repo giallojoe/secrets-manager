@@ -6,189 +6,13 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+
+use crate::{Config, KeyRef};
 use is_terminal::IsTerminal as _;
 
-use crate::{ConfigValue, Configuration, SecretManager};
+use crate::{ConfigValue, Configuration};
 
-use super::{get_config_path, get_path};
-
-#[derive(Parser)]
-pub struct Config {
-    #[arg(short, long)]
-    config: Option<PathBuf>,
-
-    #[arg(long)]
-    cwd: Option<PathBuf>,
-
-    #[arg(short, long)]
-    path: Option<PathBuf>,
-    #[command(subcommand)]
-    command: ConfigCommands,
-}
-
-#[derive(Subcommand)]
-enum ConfigCommands {
-    Get {
-        key: Option<String>,
-    },
-    Set {
-        key: String,
-        #[command(subcommand)]
-        value: ValueInput,
-    },
-    Remove {
-        key: String,
-    },
-    GetAll,
-    /// import from env file
-    Import {
-        file: PathBuf,
-    },
-    Export {
-        #[arg(short, long)]
-        format: Format,
-    },
-}
-
-#[derive(Subcommand)]
-enum ValueInput {
-    #[command(name = "--value")]
-    Value { value: String },
-    #[command(name = "--secret")]
-    Secret(SecretInput),
-}
-
-#[derive(Parser)]
-struct SecretInput {
-    secret_path: PathBuf,
-    secret_key: String,
-}
-
-pub async fn handle_config(cli: Config) -> Result<(), Box<dyn std::error::Error>> {
-    let config_file_path = get_config_path(cli.config.clone(), "config.json")?;
-    let secret_file_path = get_config_path(cli.config, "secret.json")?;
-    if !secret_file_path.exists() {
-        return Err(String::from("Secret configuration not found, make sure to run secret create with the name of the secret, (if it exists it will not create it again)").into());
-    }
-    let secrets = SecretManager::from_config(secret_file_path, PathBuf::from("/")).await?;
-    let cwd = get_path(cli.cwd, cli.path)?;
-    let mut config = Configuration::from_path(&config_file_path, cwd)?;
-    match cli.command {
-        ConfigCommands::Get { key } => {
-            print_config(&config, &secrets, key.as_deref())?;
-        }
-        ConfigCommands::Set { key, value } => {
-            let value = match value {
-                ValueInput::Value { value } => ConfigValue::Value(value),
-                ValueInput::Secret(s) => ConfigValue::Secret {
-                    path: s.secret_path,
-                    key: s.secret_key,
-                },
-            };
-
-            set_config_value(&mut config, &config_file_path, key, value)?;
-        }
-        ConfigCommands::Remove { key } => {
-            remove_config_value(&mut config, &config_file_path, &key)?;
-        }
-        ConfigCommands::GetAll => {
-            println!("{}", config.print_tree());
-        }
-        ConfigCommands::Import { file } => {
-            import_config(&mut config, &config_file_path, file)?;
-        }
-        ConfigCommands::Export { format } => {
-            export_config(&config, &secrets, &format)?;
-        }
-    }
-    Ok(())
-}
-
-pub fn print_config(
-    config: &Configuration<ConfigValue>,
-    secrets: &SecretManager,
-    key: Option<&str>,
-) -> Result<(), String> {
-    if let Some(key) = key {
-        let value = config
-            .get_value(&key)
-            .ok_or_else(|| format!("Missing key {}", key))?;
-        let value = secrets
-            .resolve_value(value)
-            .ok_or_else(|| format!("Missing secret {}", value))?;
-        println!("{}: {}", key, value);
-    } else {
-        let data = secrets.resolve(config);
-        for (key, value) in data {
-            println!("{}: {}", key, value);
-        }
-    }
-    Ok(())
-}
-
-pub fn set_config_value(
-    config: &mut Configuration<ConfigValue>,
-    path: impl AsRef<Path>,
-    key: String,
-    value: ConfigValue,
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("ConfigValue: {}", value);
-    let res = config.set_value(key.clone(), value);
-    if let Some(res) = res {
-        println!("{} value overridden, previous value was `{}`", key, res);
-    } else {
-        println!("{} updated successfully", key);
-    }
-    config.save(&path)?;
-    Ok(())
-}
-
-pub fn remove_config_value(
-    config: &mut Configuration<ConfigValue>,
-    path: impl AsRef<Path>,
-    key: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let res = config.remove_value(&key);
-    if let Some(res) = res {
-        println!("{} value removed, previous value was `{}`", key, res);
-    } else {
-        println!("{} not found, nothing to do", key);
-    }
-    config.save(path)?;
-    Ok(())
-}
-
-pub fn import_config(
-    config: &mut Configuration<ConfigValue>,
-    path: impl AsRef<Path>,
-    file: PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if file == PathBuf::from("-") {
-        if std::io::stdin().is_terminal() {
-            println!("Only available in non-interactive terminal");
-            ::std::process::exit(2);
-        }
-        read_from_env(BufReader::new(std::io::stdin().lock()), config);
-    } else {
-        read_from_env(BufReader::new(File::open(&file)?), config);
-    }
-    config.save(path)?;
-    Ok(())
-}
-
-pub fn export_config(
-    config: &Configuration<ConfigValue>,
-    secrets: &SecretManager,
-    format: &Format,
-) -> Result<(), serde_json::Error> {
-    let data = secrets.resolve(config);
-    let result = match format {
-        Format::EnvFile => export_as_env(&data),
-        Format::Json => serde_json::to_string(&data)?,
-    };
-    println!("{result}");
-    Ok(())
-}
+use super::{get_path, parse_key_ref};
 
 #[derive(clap::ValueEnum, Default, Clone)]
 pub enum Format {
@@ -199,7 +23,173 @@ pub enum Format {
     Json,
 }
 
-fn export_as_env(data: &HashMap<&String, &String>) -> String {
+#[derive(Parser)]
+pub struct ConfigCLI {
+    /// Directory base, defaults to the base name of the current working directory,
+    /// e.g if the path is /home/joe/work/test-dir, cwd will be test-dir
+    #[arg(long)]
+    cwd: Option<PathBuf>,
+    /// keys can be in the format path.to.secret.key
+    #[command(subcommand)]
+    command: ConfigCommands,
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Gets all keys for current context
+    Get {
+        /// if set, it will only return the specified key, if it exists.
+        /// Key can be in the form of a `.` separated path
+        key: Option<String>,
+    },
+    /// Sets/adds the specified key to the current context
+    /// value can either be `--value <hardcoded value> or --secret <secret key>`
+    Set {
+        /// Key can be in the form of a `.` separated path
+        key: String,
+        #[clap(flatten)]
+        value: ValueInput,
+    },
+    /// Deletes the specified key from the current context
+    Remove { key: String },
+    ///Prints a tree structure of all keys for all bases
+    GetAll,
+    /// import from env file
+    Import { file: PathBuf },
+    /// Export config in either json or dotenv format
+    Export {
+        #[arg(short, long)]
+        format: Format,
+    },
+}
+
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+struct ValueInput {
+    /// Hardcoded value to set the key to
+    #[arg(long)]
+    value: Option<String>,
+    #[command(flatten)]
+    secret: Option<SecretInput>,
+}
+
+#[derive(clap::Args)]
+struct SecretInput {
+    /// Name of the vault that contains the secret
+    name: String,
+    /// key of the secret, in the format of a `.` separated path
+    secret: String,
+}
+
+pub async fn handle_config(
+    mut config: Config,
+    cli: ConfigCLI,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cli.command {
+        ConfigCommands::Get { key } => {
+            let path = get_path(&config, cli.cwd)?;
+            let key = key.unwrap_or("".to_string());
+            let key_ref = parse_key_ref(key.as_str(), &path)?;
+            print_config(&config, &key_ref)?;
+        }
+        ConfigCommands::Set { key, value } => {
+            let path = get_path(&config, cli.cwd)?;
+            let key_ref = parse_key_ref(&key, &path)?;
+            let value = match (value.value, value.secret) {
+                (Some(v), None) => ConfigValue::from_value(v),
+                (None, Some(secret)) => ConfigValue::from_secret(secret.name, secret.secret)?,
+                _ => unreachable!(),
+            };
+            let display_key = key_ref.to_string();
+            if let Some(replaced) = config.set(key_ref, value)? {
+                println!(
+                    "{} value set successfully, previous value was {}",
+                    display_key, replaced
+                );
+            } else {
+                println!("{} value set successfully", display_key);
+            }
+        }
+        ConfigCommands::Remove { key } => {
+            let path = get_path(&config, cli.cwd)?;
+            let key_ref = parse_key_ref(&key, &path)?;
+            let Some(removed) = config.remove(&key_ref) else {
+                return Err(format!("{} not found", key_ref).into());
+            };
+            config.save().await?;
+            println!(
+                "{} removed successfully, previous value was {}",
+                key_ref, removed
+            );
+        }
+        ConfigCommands::GetAll => {
+            println!("{}", config.display());
+        }
+        ConfigCommands::Import { file } => {
+            let path = get_path(&config, cli.cwd)?;
+            import_config(config, &path, file).await?;
+        }
+        ConfigCommands::Export { format } => {
+            let path = get_path(&config, cli.cwd)?;
+            export_config(&config, &path, &format)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn print_config(config: &Config, key: &KeyRef) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(value) = config.get(key) else {
+        let data = config.get_all(&key.path.join(&key.key));
+        if !data.is_empty() {
+            for (key, value) in data {
+                println!("{}: {}", key, value);
+            }
+        } else {
+            return Err(format!("Missing key {}", key).into());
+        }
+        return Ok(());
+    };
+    println!("{}: {}", key.key, value);
+    Ok(())
+}
+
+pub async fn import_config(
+    mut config: Config,
+    path: &Path,
+    file: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if file == PathBuf::from("-") {
+        if std::io::stdin().is_terminal() {
+            println!("Only available in non-interactive terminal");
+            ::std::process::exit(2);
+        }
+        read_from_env(
+            BufReader::new(std::io::stdin().lock()),
+            path,
+            &mut config.config,
+        )?;
+    } else {
+        read_from_env(BufReader::new(File::open(&file)?), path, &mut config.config)?;
+    }
+    config.save().await?;
+    Ok(())
+}
+
+pub fn export_config(
+    config: &Config,
+    path: &Path,
+    format: &Format,
+) -> Result<(), serde_json::Error> {
+    let data = config.get_all(path);
+    let result = match format {
+        Format::EnvFile => export_as_env(&data),
+        Format::Json => serde_json::to_string(&data)?,
+    };
+    println!("{result}");
+    Ok(())
+}
+
+fn export_as_env(data: &HashMap<&str, String>) -> String {
     let mut res = String::new();
     for (key, value) in data {
         res.push_str(&format!("{}=\"{}\"\n", key, value));
@@ -207,7 +197,11 @@ fn export_as_env(data: &HashMap<&String, &String>) -> String {
     res
 }
 
-fn read_from_env(buf: impl BufRead, config: &mut Configuration<ConfigValue>) {
+fn read_from_env(
+    buf: impl BufRead,
+    path: &Path,
+    config: &mut Configuration<ConfigValue>,
+) -> Result<(), Box<dyn std::error::Error>> {
     buf.lines()
         .filter_map(|line| line.ok())
         .filter_map(|line| {
@@ -217,7 +211,9 @@ fn read_from_env(buf: impl BufRead, config: &mut Configuration<ConfigValue>) {
             let key = key.to_string();
             Some((key, value))
         })
-        .for_each(|(key, value)| {
-            config.set_value(&key, ConfigValue::Value(value));
-        });
+        .try_for_each(|(key, value)| {
+            let key_ref = parse_key_ref(&key, path)?;
+            config.set(key_ref, ConfigValue::Value(value));
+            Ok(())
+        })
 }

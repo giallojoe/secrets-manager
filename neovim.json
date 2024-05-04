@@ -1,0 +1,1 @@
+{"cmake":{"dap_name":"lldb","cmd":"cmake","args":{"configure":["-D","CMAKE_EXPORT_COMPILE_COMMANDS=1","-G","Ninja"]},"build_type":"Debug","build_dir":"{cwd}\/build\/{os}-{build_type}"},"cargo":{"dap_name":"codelldb","args":{"run":["--bin","secrets-manager","--","config","get-all"]}}}
