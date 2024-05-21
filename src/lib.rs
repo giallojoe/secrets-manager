@@ -11,7 +11,6 @@ pub use config::Configuration;
 pub use secrets::AwsSecretVault;
 use secrets::{VaultKind, VaultTrait};
 use serde::{Deserialize, Serialize};
-use tokio::task::JoinSet;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyRef {
@@ -53,15 +52,10 @@ impl Config {
             })?;
             res
         };
-        let mut set = JoinSet::new();
         let len = res.secrets.len();
-        for (name, kind) in res.secrets.into_iter() {
-            set.spawn_local(async { kind.into_vault().await.map(|v| (name, v)) });
-        }
         let mut vaults = HashMap::with_capacity(len);
-        while let Some(res) = set.join_next().await {
-            let (name, vault) = res??;
-            vaults.insert(name, vault);
+        for (name, kind) in res.secrets.into_iter() {
+            vaults.insert(name, kind.into_vault().await?);
         }
         Ok(Self {
             path,

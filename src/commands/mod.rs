@@ -17,6 +17,9 @@ use crate::{
 
 pub fn parse_key_ref(key: &str, path: &Path) -> Result<KeyRef, Box<dyn std::error::Error>> {
     let mut res: KeyRef = key.parse()?;
+    if res.path.is_absolute() {
+        res.path = res.path.strip_prefix("/")?.to_path_buf();
+    }
     res.path = PathBuf::from("/").join(path).join(res.path);
     Ok(res)
 }
