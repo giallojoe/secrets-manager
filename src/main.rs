@@ -43,6 +43,8 @@ enum ContextCommands {
     Get,
     /// Sets the context to the specified value
     Set { context: PathBuf },
+    /// Empties the current context
+    Reset,
 }
 
 #[tokio::main]
@@ -82,6 +84,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "current context: {}",
                     config.get_current_context().display()
                 );
+                config.save().await?;
+            }
+            Commands::Context {
+                command: ContextCommands::Reset,
+            } => {
+                init_config(&config_path)?;
+                let mut config = Config::load(config_path).await?;
+                config.set_current_context(PathBuf::new());
                 config.save().await?;
             }
         }

@@ -108,7 +108,7 @@ pub async fn handle_config_migration(
             Some(())
         })
         .ok_or_else(|| format!("Could not migrate data, some keys are missing"))?;
-    let vault = AwsSecretVault::create(secret_name.to_string()).await?;
+    let vault = AwsSecretVault::create(secret_name.to_string(), String::from("default")).await?;
     let mut vaults = HashMap::new();
     vaults.insert(
         secret_name.to_string(),

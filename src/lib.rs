@@ -20,16 +20,14 @@ pub struct KeyRef {
 
 impl Display for KeyRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut dotted: String = self
+        let mut parts: Vec<_> = self
             .path
-            .display()
-            .to_string()
-            .replace(std::path::MAIN_SEPARATOR, ".");
-        dotted = dotted
-            .strip_prefix(".")
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| dotted.to_string());
-        write!(f, "{}.{}", dotted, self.key)
+            .iter()
+            .skip(1)
+            .map(|v| v.to_string_lossy().to_string())
+            .collect();
+        parts.push(self.key.clone());
+        write!(f, "{}", parts.join("."))
     }
 }
 
@@ -179,6 +177,7 @@ impl Config {
     ) -> Result<Option<String>, ConfigError> {
         let vault = self.get_vault_mut(name)?;
         let replaced = vault.get_mut().set(key, value);
+        self.updated.push(name.to_string());
         Ok(replaced)
     }
 
@@ -189,6 +188,7 @@ impl Config {
     ) -> Result<Option<String>, ConfigError> {
         let vault = self.get_vault_mut(name)?;
         let removed = vault.get_mut().remove(key);
+        self.updated.push(name.to_string());
         Ok(removed)
     }
     pub fn get_secret(&self, name: &str, key_ref: &KeyRef) -> Result<Option<&str>, ConfigError> {

@@ -50,7 +50,12 @@ enum VaultCommands {
 enum SecretProvider {
     /// Use AWS secret manager as a provider
     #[command(name = "--aws")]
-    AwsSecretManager { secret_name: String },
+    AwsSecretManager {
+        secret_name: String,
+        /// Aws profile to use
+        #[arg(long, default_value_t = String::from("default"))]
+        profile: String,
+    },
 }
 
 pub async fn handle_secrets(
@@ -123,12 +128,15 @@ async fn handle_create_secret(
     set_default: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match provider {
-        SecretProvider::AwsSecretManager { secret_name } => {
+        SecretProvider::AwsSecretManager {
+            secret_name,
+            profile,
+        } => {
             println!(
                 "Creating vault {} with AWS Secrets Manager and secret name {}",
                 name, secret_name
             );
-            let vault = AwsSecretVault::create(secret_name).await?;
+            let vault = AwsSecretVault::create(secret_name, profile).await?;
             config
                 .add_vault(name.clone(), vault.into_vault_kind())
                 .await?;

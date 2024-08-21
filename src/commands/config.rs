@@ -47,7 +47,7 @@ enum ConfigCommands {
     Set {
         /// Key can be in the form of a `.` separated path
         key: String,
-        #[clap(flatten)]
+        #[command(subcommand)]
         value: ValueInput,
     },
     /// Deletes the specified key from the current context
@@ -63,14 +63,14 @@ enum ConfigCommands {
     },
 }
 
-#[derive(clap::Args)]
-#[group(required = true, multiple = false)]
-struct ValueInput {
+#[derive(Subcommand)]
+enum ValueInput {
+    #[command(name = "--value")]
     /// Hardcoded value to set the key to
-    #[arg(long)]
-    value: Option<String>,
-    #[command(flatten)]
-    secret: Option<SecretInput>,
+    Value { value: String },
+    #[command(name = "--secret")]
+    /// link value to vault secret
+    Secret(SecretInput),
 }
 
 #[derive(clap::Args)]
@@ -95,10 +95,12 @@ pub async fn handle_config(
         ConfigCommands::Set { key, value } => {
             let path = get_path(&config, cli.cwd)?;
             let key_ref = parse_key_ref(&key, &path)?;
-            let value = match (value.value, value.secret) {
-                (Some(v), None) => ConfigValue::from_value(v),
-                (None, Some(secret)) => ConfigValue::from_secret(secret.name, secret.secret)?,
-                _ => unreachable!(),
+            println!("path: {}, key_ref: {}", path.display(), key_ref);
+            let value = match value {
+                ValueInput::Value { value } => ConfigValue::from_value(value),
+                ValueInput::Secret(secret_input) => {
+                    ConfigValue::from_secret(secret_input.name, secret_input.secret)?
+                }
             };
             let display_key = key_ref.to_string();
             if let Some(replaced) = config.set(key_ref, value)? {
@@ -109,6 +111,7 @@ pub async fn handle_config(
             } else {
                 println!("{} value set successfully", display_key);
             }
+            config.save().await?;
         }
         ConfigCommands::Remove { key } => {
             let path = get_path(&config, cli.cwd)?;
