@@ -95,7 +95,6 @@ pub async fn handle_config(
         ConfigCommands::Set { key, value } => {
             let path = get_path(&config, cli.cwd)?;
             let key_ref = parse_key_ref(&key, &path)?;
-            println!("path: {}, key_ref: {}", path.display(), key_ref);
             let value = match value {
                 ValueInput::Value { value } => ConfigValue::from_value(value),
                 ValueInput::Secret(secret_input) => {
